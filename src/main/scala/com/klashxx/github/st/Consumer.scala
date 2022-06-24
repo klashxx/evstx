@@ -1,9 +1,10 @@
 package com.klashxx.github.st
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.streaming.Trigger
 
-object Runner extends App {
-  println("Running ...")
+object Consumer extends App {
+  println("Consuming ...")
 
   val spark = SparkSession.builder.appName("evstx").master("local").getOrCreate
 
@@ -11,8 +12,15 @@ object Runner extends App {
     .format("kafka")
     .option("kafka.bootstrap.servers", "localhost:9092")
     .option("subscribe", "quickstart")
-    .option("startingOffsets", "earliest") // From starting
+    .option("startingOffsets", "earliest")
     .load()
 
   df.printSchema()
+
+  df.writeStream
+    .format("console")
+    .outputMode("append")
+    .trigger(Trigger.ProcessingTime("20 seconds"))
+    .start()
+    .awaitTermination()
 }
