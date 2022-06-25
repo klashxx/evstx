@@ -5,18 +5,21 @@ import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
+
 object Consumer extends App {
   println("Consuming ...")
 
+  val propsMaps = Common.getPropsMaps
+
   val spark = SparkSession.builder
-    .appName("evstx")
-    .master("local")
+    .appName(propsMaps.getOrElse("app.name", "evstx"))
+    .master(propsMaps.getOrElse("master.mode", "local"))
     .getOrCreate
 
   val df = spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "localhost:9092")
-    .option("subscribe", "evstx")
+    .option("kafka.bootstrap.servers", propsMaps.getOrElse("kafka.bootstrap.servers", "localhost:9092"))
+    .option("subscribe", propsMaps.getOrElse("topic.name", "evstx"))
     .option("startingOffsets", "latest")
     .load()
 
