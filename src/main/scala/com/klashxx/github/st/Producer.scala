@@ -6,8 +6,6 @@ import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, Produce
 import java.util.Properties
 import scala.util.Random
 
-case class Message(id: String, timestamp: Long, flag: String)
-
 object Producer extends App {
   val propsMaps = Common.getPropsMaps
 
