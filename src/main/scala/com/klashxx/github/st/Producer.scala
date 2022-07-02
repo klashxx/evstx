@@ -4,8 +4,9 @@ import com.google.gson.Gson
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 
 import java.util.Properties
+import scala.util.Random
 
-case class Message(id: String, timestamp: Long)
+case class Message(id: String, timestamp: Long, flag: String)
 
 object Producer extends App {
   val propsMaps = Common.getPropsMaps
@@ -19,16 +20,26 @@ object Producer extends App {
   val producer = new KafkaProducer[String, String](props)
   val topic = propsMaps.getOrElse("topic.name", "evstx")
   val gson = new Gson
+  var counter = 0
 
   try {
-    while(true) {
+    while (true) {
+      val numMessagesPerId = Random.between(2, 6)
       val id = java.util.UUID.randomUUID.toString replaceAll("-", "")
-      val message = Message(id, System.currentTimeMillis / 1000)
-      val jsonMessage = gson.toJson(message)
-      val record = new ProducerRecord[String, String](topic, id, jsonMessage)
-      producer.send(record)
-      println(jsonMessage)
-      Thread.sleep(1 * 1000)
+      while (counter <= numMessagesPerId) {
+        val message = Message(
+          id,
+          System.currentTimeMillis / 1000,
+          if (counter == numMessagesPerId) "ENDOPERATION" else s"OPERATION-$counter"
+        )
+        val jsonMessage = gson.toJson(message)
+        val record = new ProducerRecord[String, String](topic, id, jsonMessage)
+        producer.send(record)
+        println(jsonMessage)
+        Thread.sleep(1 * 1000)
+        counter += 1
+      }
+      counter = 0
     }
   } catch {
     case e: Exception => e.printStackTrace()
