@@ -25,10 +25,11 @@ object Producer extends App {
       val numMessagesPerId = Random.between(2, 6)
       val id = java.util.UUID.randomUUID.toString replaceAll("-", "")
       while (counter <= numMessagesPerId) {
-        val message = Message(
+        val message = UserEvent(
           id,
           System.currentTimeMillis / 1000,
-          if (counter == numMessagesPerId) "ENDOPERATION" else s"OPERATION-$counter"
+          if (counter == numMessagesPerId) true else false,
+          ""
         )
         val jsonMessage = gson.toJson(message)
         val record = new ProducerRecord[String, String](topic, id, jsonMessage)

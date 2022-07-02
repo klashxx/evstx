@@ -1,3 +1,5 @@
 package com.klashxx.github.st
 
-case class Message(id: String, timestamp: Long, flag: String)
+case class UserEvent(id: String, timestamp: Long, isLast: Boolean, data: String)
+
+case class UserSession(userEvents: Seq[UserEvent])
