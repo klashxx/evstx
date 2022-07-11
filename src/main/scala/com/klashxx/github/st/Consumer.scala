@@ -1,13 +1,18 @@
 package com.klashxx.github.st
 
+import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.ScalaReflection
+import org.apache.spark.sql.catalyst.plans.logical.ProcessingTimeTimeout
 import org.apache.spark.sql.functions.{col, from_json}
-import org.apache.spark.sql.streaming.{GroupState, GroupStateTimeout, OutputMode, Trigger}
+import org.apache.spark.sql.streaming.{GroupState, OutputMode, Trigger}
 import org.apache.spark.sql.types.StructType
 
 
 object Consumer extends App {
+  val logger = Logger.getLogger("org")
+  logger.setLevel(Level.WARN)
+
   val propsMaps = Common.getPropsMaps
 
   println("Consuming ...")
@@ -17,56 +22,75 @@ object Consumer extends App {
     .master(propsMaps.getOrElse("master.mode", "local"))
     .getOrCreate
 
-  val df = spark.readStream
+  val eventsStream = spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", propsMaps.getOrElse("kafka.bootstrap.servers", "localhost:9092"))
     .option("subscribe", propsMaps.getOrElse("topic.name", "evstx"))
     .option("startingOffsets", "latest")
-    .option("checkpointLocation",  propsMaps.getOrElse("checkpoint.path", "/tmp/evstx-ckeckpoint"))
+    .option("checkpointLocation", propsMaps.getOrElse("checkpoint.path", "/tmp/evstx-checkpoint"))
     .load()
 
   val schema = ScalaReflection.schemaFor[UserEvent].dataType.asInstanceOf[StructType]
 
-
   import spark.implicits._
 
-  def updateSessionEvents(id: String,
-                          userEvents: Iterator[UserEvent],
-                          state: GroupState[UserSession]): Option[UserSession] = {
-    if (state.hasTimedOut) {
-      state.remove()
-      state.getOption
-    } else {
-      val currentState = state.getOption
-      val updatedUserSession =
-        currentState.fold(UserSession(userEvents.toSeq))(currentUserSession =>
-          UserSession(currentUserSession.userEvents ++ userEvents.toSeq))
-      state.update(updatedUserSession)
+  def updateConnectionState(
+                             id: String,
+                             events: Iterator[UserEvent],
+                             session: GroupState[UserSession]): Option[UserSession] = {
 
-      if (updatedUserSession.userEvents.exists(_.isLast)) {
-        val userSession = state.getOption
-        state.remove()
-        userSession
+    if (session.hasTimedOut) {
+      logger.warn("session-timeout")
+      val sessionState = session.getOption
+      session.remove()
+      sessionState
+    } else if (session.exists) {
+      logger.warn("existing-user-session: " + id)
+      val userEvents = session.get.userEvents ++ events.toSeq
+      session.update(UserSession(id, userEvents))
+
+      val sessionState = session.getOption
+
+      if (userEvents.exists(_.isLast == true)) {
+        logger.warn("existing-user-session-is-last: " + id)
+        session.remove()
+        sessionState
       } else {
-        state.setTimeoutDuration("1 minute")
+        logger.warn("existing-user-session-setting-timeout: " + id)
+        session.setTimeoutDuration("1 hour")
+        None
+      }
+    } else {
+      val userEvents = events.toSeq
+
+      session.update(UserSession(id, userEvents))
+
+      if (userEvents.exists(_.isLast == true)) {
+        logger.warn("new-user-session-is-last: " + id)
+        val sessionState = session.getOption
+        session.remove()
+        sessionState
+      } else {
+        logger.warn("new-user-session: " + id)
+        session.setTimeoutDuration("1 hour")
         None
       }
     }
   }
 
-  df.selectExpr("CAST(value AS STRING)")
+  eventsStream.selectExpr("CAST(value AS STRING)")
     .select(from_json(col("value"), schema).as("data"))
     .select("data.*")
     .selectExpr("id", "CAST(timestamp AS TIMESTAMP)", "isLast", "data")
     .as[UserEvent]
+    .withWatermark("timestamp", "5 minutes")
     .groupByKey(_.id)
-    .mapGroupsWithState(GroupStateTimeout.ProcessingTimeTimeout())(
-      updateSessionEvents)
+    .mapGroupsWithState(ProcessingTimeTimeout)(updateConnectionState)
     .flatMap(userSession => userSession)
     .writeStream
-    .outputMode(OutputMode.Update())
+    .outputMode(OutputMode.Update)
     .queryName("evstx")
-    .format("console")
+    .format("console").option("truncate", "false")
     .trigger(Trigger.ProcessingTime("30 seconds"))
     .start()
     .awaitTermination()
